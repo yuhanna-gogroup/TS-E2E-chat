@@ -1,0 +1,23 @@
+{
+  "name": "e2e-chat-app",
+  "version": "1.0.0",
+  "description": "End-to-end encrypted chat app with RSA encryption",
+  "main": "server.ts",
+  "scripts": {
+    "dev": "bun run --watch server.ts",
+    "start": "bun run server.ts",
+    "build": "bun build server.ts --outdir dist",
+    "build-frontend": "bun build frontend/main.ts --outfile frontend/main.js --watch"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.5",
+    "bun-types": "latest"
+  }
+}
