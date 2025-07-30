@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🔐 SecureChat Debug - Development Console</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: #2d2d2d;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+
+    .header {
+      background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
+      color: white;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .header h1 {
+      font-size: 24px;
+      margin-bottom: 5px;
+    }
+
+    .header p {
+      opacity: 0.9;
+      font-size: 14px;
+    }
+
+    .debug-section {
+      padding: 20px;
+      border-bottom: 1px solid #404040;
+    }
+
+    .debug-section h3 {
+      color: #4fc3f7;
+      margin-bottom: 15px;
+      font-size: 16px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .input-group {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 15px;
+      align-items: center;
+    }
+
+    .input-group input {
+      flex: 1;
+      padding: 10px;
+      background: #404040;
+      border: 1px solid #555;
+      border-radius: 6px;
+      color: #e0e0e0;
+      font-family: inherit;
+    }
+
+    .input-group input:focus {
+      outline: none;
+      border-color: #4fc3f7;
+      background: #484848;
+    }
+
+    .btn {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      transition: all 0.3s ease;
+    }
+
+    .btn-primary {
+      background: #4fc3f7;
+      color: #1a1a1a;
+    }
+
+    .btn-danger {
+      background: #f44336;
+      color: white;
+    }
+
+    .btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .status {
+      padding: 12px;
+      border-radius: 6px;
+      margin: 10px 0;
+      font-size: 14px;
+      border-left: 4px solid;
+    }
+
+    .status.info {
+      background: #1e3a8a;
+      border-color: #3b82f6;
+      color: #dbeafe;
+    }
+
+    .status.success {
+      background: #166534;
+      border-color: #22c55e;
+      color: #dcfce7;
+    }
+
+    .status.error {
+      background: #991b1b;
+      border-color: #ef4444;
+      color: #fee2e2;
+    }
+
+    .users-debug {
+      background: #333;
+      padding: 15px;
+      border-radius: 6px;
+      margin: 10px 0;
+    }
+
+    .user-btn {
+      background: #4fc3f7;
+      color: #1a1a1a;
+      padding: 6px 12px;
+      margin: 3px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    .chat-debug {
+      background: #1a1a1a;
+      border: 1px solid #404040;
+      border-radius: 6px;
+      height: 300px;
+      overflow-y: auto;
+      padding: 15px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .message-input-debug {
+      width: 100%;
+      padding: 10px;
+      background: #404040;
+      border: 1px solid #555;
+      border-radius: 6px;
+      color: #e0e0e0;
+      font-family: inherit;
+      resize: none;
+      height: 60px;
+    }
+
+    .console-output {
+      background: #000;
+      border: 1px solid #333;
+      border-radius: 6px;
+      height: 200px;
+      overflow-y: auto;
+      padding: 10px;
+      font-size: 12px;
+      color: #0f0;
+      font-family: 'Courier New', monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🐛 SecureChat Debug Console</h1>
+      <p>Development Environment with Enhanced Logging</p>
+    </div>
+
+    <div class="debug-section">
+      <h3>User Registration</h3>
+      <div class="input-group">
+        <input id="username" placeholder="Enter debug username" />
+        <button class="btn btn-primary" id="register">Register</button>
+        <button class="btn btn-danger" id="logout" style="display: none;">Logout</button>
+      </div>
+      <div id="status" class="status info" style="display: none;"></div>
+    </div>
+
+    <div class="debug-section">
+      <h3>Online Users</h3>
+      <div id="users" class="users-debug">Loading users...</div>
+    </div>
+
+    <div class="debug-section">
+      <h3>Chat Messages</h3>
+      <div id="chat" class="chat-debug"></div>
+      <div style="margin-top: 10px; display: flex; gap: 10px;">
+        <textarea id="message" class="message-input-debug" placeholder="Type debug message..." disabled></textarea>
+        <button class="btn btn-primary" id="send" disabled style="align-self: flex-end;">Send</button>
+      </div>
+    </div>
+
+    <div class="debug-section">
+      <h3>Console Output</h3>
+      <div id="consoleOutput" class="console-output"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsencrypt@3.3.2/bin/jsencrypt.min.js"></script>
+  <script>
+    // Enhanced debug version with better logging
+    console.log('🚀 SecureChat Debug Console Initialized');
+    
+    // Console output capture
+    const consoleOutput = document.getElementById('consoleOutput');
+    const originalConsoleLog = console.log;
+    const originalConsoleError = console.error;
+    
+    function addToConsole(message, type = 'log') {
+      const timestamp = new Date().toLocaleTimeString();
+      const color = type === 'error' ? '#ff6b6b' : '#4fc3f7';
+      consoleOutput.innerHTML += `<div style="color: ${color}">[${timestamp}] ${message}</div>`;
+      consoleOutput.scrollTop = consoleOutput.scrollHeight;
+    }
+    
+    console.log = function(...args) {
+      originalConsoleLog.apply(console, args);
+      addToConsole(args.join(' '), 'log');
+    };
+    
+    console.error = function(...args) {
+      originalConsoleError.apply(console, args);
+      addToConsole('ERROR: ' + args.join(' '), 'error');
+    };
+
+    // Use the compiled main.js
+    const script = document.createElement('script');
+    script.src = 'main.js';
+    document.head.appendChild(script);
+  </script>
+</body>
+</html>

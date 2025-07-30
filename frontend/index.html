@@ -77,6 +77,8 @@
       flex: 1;
       display: flex;
       flex-direction: column;
+      height: 0; /* Force flex child to respect parent constraints */
+      overflow: hidden;
     }
 
     .registration-section {
@@ -194,6 +196,8 @@
       flex: 1;
       display: flex;
       flex-direction: column;
+      height: 0; /* Force flex child to respect flex: 1 */
+      min-height: 400px;
     }
 
     .messages {
@@ -204,19 +208,27 @@
       display: flex;
       flex-direction: column;
       gap: 12px;
+      max-height: calc(100vh - 280px); /* Adjust based on header and input area */
+      min-height: 300px;
+      scroll-behavior: smooth;
     }
 
     .messages::-webkit-scrollbar {
-      width: 6px;
+      width: 8px;
     }
 
     .messages::-webkit-scrollbar-track {
       background: #f1f1f1;
+      border-radius: 4px;
     }
 
     .messages::-webkit-scrollbar-thumb {
       background: #cbd5e0;
-      border-radius: 3px;
+      border-radius: 4px;
+    }
+
+    .messages::-webkit-scrollbar-thumb:hover {
+      background: #a0aec0;
     }
 
     .message {

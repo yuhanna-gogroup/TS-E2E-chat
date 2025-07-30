@@ -162,110 +162,157 @@ class SecureKeyStorage implements SecureKeyStore {
 
   private getPassword(username: string): string {
     // Generate a session-based password (in real app, use user authentication)
-    return `${username}_${Date.now()}_${navigator.userAgent}`;
+    // Use a more stable approach that doesn't change on each call
+    const sessionId = sessionStorage.getItem('chat_session_id') || 
+      (() => {
+        const id = `${username}_${Date.now()}_${Math.random()}`;
+        sessionStorage.setItem('chat_session_id', id);
+        return id;
+      })();
+    
+    return `${sessionId}_${navigator.userAgent.slice(0, 50)}`;
   }
 
   async storePrivateKey(username: string, privateKey: string): Promise<void> {
     const db = await this.openDB();
-    const transaction = db.transaction([this.storeName], 'readwrite');
-    const store = transaction.objectStore(this.storeName);
     
-    const encryptedKey = await this.encryptData(privateKey, this.getPassword(username));
-    
-    await new Promise<void>((resolve, reject) => {
-      const request = store.put({
-        id: `${username}_private`,
-        username,
-        type: 'private',
-        encryptedData: encryptedKey,
-        timestamp: Date.now()
+    try {
+      const encryptedKey = await this.encryptData(privateKey, this.getPassword(username));
+      
+      const transaction = db.transaction([this.storeName], 'readwrite');
+      const store = transaction.objectStore(this.storeName);
+      
+      await new Promise<void>((resolve, reject) => {
+        const request = store.put({
+          id: `${username}_private`,
+          username,
+          type: 'private',
+          encryptedData: encryptedKey,
+          timestamp: Date.now()
+        });
+        
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+        
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(new Error('Transaction aborted'));
       });
       
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
-    
-    db.close();
+    } finally {
+      db.close();
+    }
   }
 
   async getPrivateKey(username: string): Promise<string | null> {
     const db = await this.openDB();
-    const transaction = db.transaction([this.storeName], 'readonly');
-    const store = transaction.objectStore(this.storeName);
-    
-    const result = await new Promise<any>((resolve, reject) => {
-      const request = store.get(`${username}_private`);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    
-    db.close();
-    
-    if (!result) return null;
     
     try {
-      return await this.decryptData(result.encryptedData, this.getPassword(username));
-    } catch {
-      return null;
+      const transaction = db.transaction([this.storeName], 'readonly');
+      const store = transaction.objectStore(this.storeName);
+      
+      const result = await new Promise<any>((resolve, reject) => {
+        const request = store.get(`${username}_private`);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+        
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(new Error('Transaction aborted'));
+      });
+      
+      if (!result) return null;
+      
+      try {
+        return await this.decryptData(result.encryptedData, this.getPassword(username));
+      } catch {
+        return null;
+      }
+      
+    } finally {
+      db.close();
     }
   }
 
   async storePublicKey(username: string, publicKey: string): Promise<void> {
     const db = await this.openDB();
-    const transaction = db.transaction([this.storeName], 'readwrite');
-    const store = transaction.objectStore(this.storeName);
     
-    await new Promise<void>((resolve, reject) => {
-      const request = store.put({
-        id: `${username}_public`,
-        username,
-        type: 'public',
-        data: publicKey,
-        timestamp: Date.now()
+    try {
+      const transaction = db.transaction([this.storeName], 'readwrite');
+      const store = transaction.objectStore(this.storeName);
+      
+      await new Promise<void>((resolve, reject) => {
+        const request = store.put({
+          id: `${username}_public`,
+          username,
+          type: 'public',
+          data: publicKey,
+          timestamp: Date.now()
+        });
+        
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+        
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(new Error('Transaction aborted'));
       });
       
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
-    
-    db.close();
+    } finally {
+      db.close();
+    }
   }
 
   async getPublicKey(username: string): Promise<string | null> {
     const db = await this.openDB();
-    const transaction = db.transaction([this.storeName], 'readonly');
-    const store = transaction.objectStore(this.storeName);
     
-    const result = await new Promise<any>((resolve, reject) => {
-      const request = store.get(`${username}_public`);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    
-    db.close();
-    
-    return result ? result.data : null;
+    try {
+      const transaction = db.transaction([this.storeName], 'readonly');
+      const store = transaction.objectStore(this.storeName);
+      
+      const result = await new Promise<any>((resolve, reject) => {
+        const request = store.get(`${username}_public`);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+        
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(new Error('Transaction aborted'));
+      });
+      
+      return result ? result.data : null;
+      
+    } finally {
+      db.close();
+    }
   }
 
   async clearKeys(username: string): Promise<void> {
     const db = await this.openDB();
-    const transaction = db.transaction([this.storeName], 'readwrite');
-    const store = transaction.objectStore(this.storeName);
     
-    await Promise.all([
-      new Promise<void>((resolve, reject) => {
-        const request = store.delete(`${username}_private`);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      }),
-      new Promise<void>((resolve, reject) => {
-        const request = store.delete(`${username}_public`);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      })
-    ]);
-    
-    db.close();
+    try {
+      const transaction = db.transaction([this.storeName], 'readwrite');
+      const store = transaction.objectStore(this.storeName);
+      
+      await Promise.all([
+        new Promise<void>((resolve, reject) => {
+          const request = store.delete(`${username}_private`);
+          request.onsuccess = () => resolve();
+          request.onerror = () => reject(request.error);
+        }),
+        new Promise<void>((resolve, reject) => {
+          const request = store.delete(`${username}_public`);
+          request.onsuccess = () => resolve();
+          request.onerror = () => reject(request.error);
+        })
+      ]);
+      
+      // Wait for transaction to complete
+      await new Promise<void>((resolve, reject) => {
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(new Error('Transaction aborted'));
+      });
+      
+    } finally {
+      db.close();
+    }
   }
 }
 
@@ -295,7 +342,11 @@ function appendMessage(msg: string, isMine: boolean, isSystem: boolean = false):
   }
   
   chat.appendChild(div);
-  chat.scrollTop = chat.scrollHeight;
+  
+  // Ensure smooth scroll to bottom
+  setTimeout(() => {
+    chat.scrollTop = chat.scrollHeight;
+  }, 10);
 }
 
 function updateConnectionStatus(connected: boolean): void {
@@ -305,6 +356,23 @@ function updateConnectionStatus(connected: boolean): void {
   } else {
     statusIndicator.classList.remove('connected');
     statusIndicator.title = 'Disconnected';
+  }
+}
+
+async function fetchUsers(): Promise<void> {
+  try {
+    console.log('👥 Fetching users list...');
+    const res = await fetch('/api/users');
+    if (!res.ok) {
+      throw new Error('Failed to fetch users');
+    }
+    const usersList = await res.json();
+    console.log('👥 Users fetched:', usersList);
+    users = usersList;
+    renderUsers();
+  } catch (error) {
+    console.error('❌ Error fetching users:', error);
+    showStatusMessage('Failed to load users', 'error');
   }
 }
 
@@ -390,84 +458,121 @@ registerBtn.onclick = async (): Promise<void> => {
   }
   
   registerBtn.disabled = true;
-  registerBtn.textContent = 'Joining...';
+  registerBtn.textContent = 'Generating Keys...';
   
   try {
+    // Check if JSEncrypt is available
+    if (!(window as any).JSEncrypt) {
+      throw new Error('JSEncrypt library not loaded');
+    }
+    console.log('🔍 JSEncrypt library is available');
+    
+    // Generate RSA key pair on client side
+    console.log('🔑 Generating RSA key pair...');
+    const crypt = new (window as any).JSEncrypt({ default_key_size: 2048 });
+    crypt.getKey();
+    
+    myPrivateKey = crypt.getPrivateKey();
+    myPublicKey = crypt.getPublicKey();
+    
+    if (!myPrivateKey || !myPublicKey) {
+      throw new Error('Failed to generate RSA key pair');
+    }
+    
+    console.log('✅ RSA key pair generated successfully');
+    console.log('🔑 Private key length:', myPrivateKey.length);
+    console.log('🔑 Public key length:', myPublicKey.length);
+    
+    // Store keys securely
+    console.log('💾 Storing keys securely...');
+    await keyStore.storePrivateKey(username, myPrivateKey);
+    await keyStore.storePublicKey(username, myPublicKey);
+    console.log('✅ Keys stored successfully');
+    
+    registerBtn.textContent = 'Joining...';
+    
+    console.log('📡 Sending registration request...');
     const res = await fetch('/api/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username })
+      body: JSON.stringify({ username, publicKey: myPublicKey })
     });
+    
+    console.log('📡 Response status:', res.status);
     
     if (!res.ok) {
       const error = await res.json();
       throw new Error(error.error || 'Registration failed');
     }
     
+    const result = await res.json();
+    console.log('📡 Registration response:', result);
+    
     myUsername = username;
     
+    console.log('✅ Registration successful, keys stored securely');
+    
     // Initialize Socket.io
+    console.log('🔌 Initializing Socket.io...');
     socket = (window as any).io();
     
     socket.on('connect', () => {
+      console.log('🔌 Socket connected successfully');
       updateConnectionStatus(true);
       showStatusMessage(`Connected as ${username}`, 'success');
+      
+      // Update UI
+      updateUIForLoggedInUser();
+      
+      // Fetch users list
+      fetchUsers();
     });
     
     socket.on('disconnect', () => {
+      console.log('🔌 Socket disconnected');
       updateConnectionStatus(false);
       showStatusMessage('Connection lost', 'error');
     });
     
     socket.on('receive-message', async (payload: MessagePayload) => {
-      if (payload.to !== myUsername) return;
+      console.log('📨 Received message:', payload);
+      console.log('📧 Message intended for:', payload.to, '| My username:', myUsername);
+      
+      if (payload.to !== myUsername) {
+        console.log('❌ Message not for me, ignoring');
+        return;
+      }
+      
+      console.log('✅ Message is for me, attempting to decrypt');
       
       // Decrypt message using securely stored private key
       const storedPrivateKey = await keyStore.getPrivateKey(myUsername);
       if (!storedPrivateKey) {
+        console.error('❌ No private key found in storage');
         appendMessage(`Failed to retrieve decryption key`, false, true);
         return;
       }
+      
+      console.log('🔑 Retrieved private key from storage');
       
       const decrypt = new (window as any).JSEncrypt();
       decrypt.setPrivateKey(storedPrivateKey);
       
       let decrypted: string = '';
       try {
+        console.log('🔓 Attempting decryption...');
         decrypted = decrypt.decrypt(payload.encrypted);
         if (!decrypted) {
           throw new Error('Decryption returned null');
         }
+        console.log('✅ Decryption successful:', decrypted);
       } catch (error) {
-        console.error('Decryption failed:', error);
+        console.error('❌ Decryption failed:', error);
         decrypted = '[🔒 Decryption failed]';
       }
       
       appendMessage(`${payload.from}: ${decrypted}`, false);
     });
-    
-    await refreshUsers();
-    updateUIForLoggedInUser();
-    
-    // Generate key pair in browser for demo (simulate E2E)
-    appendMessage('Generating RSA key pair...', false, true);
-    const key = new (window as any).JSEncrypt({ default_key_size: 2048 });
-    key.getKey();
-    
-    myPrivateKey = key.getPrivateKey();
-    myPublicKey = key.getPublicKey();
-    
-    // Store keys securely
-    try {
-      await keyStore.storePrivateKey(myUsername, myPrivateKey);
-      await keyStore.storePublicKey(myUsername, myPublicKey);
-      appendMessage('🔐 Encryption keys generated and stored securely', false, true);
-      showStatusMessage('Ready for secure messaging!', 'success');
-    } catch (error) {
-      console.error('Failed to store keys:', error);
-      showStatusMessage('Failed to store encryption keys', 'error');
-      return;
-    }
     
   } catch (error) {
     console.error('Registration error:', error);
@@ -518,17 +623,23 @@ sendBtn.onclick = async (): Promise<void> => {
   try {
     // Get recipient's public key from secure storage first
     let recipientPublicKey = await keyStore.getPublicKey(selectedUser);
+    console.log('🔑 Retrieved public key from storage for', selectedUser, ':', !!recipientPublicKey);
     
     // If not found locally, try to get from server
     if (!recipientPublicKey) {
+      console.log('🌐 Fetching public key from server for', selectedUser);
       const keyRes = await fetch(`/api/public-key/${selectedUser}`);
       if (keyRes.ok) {
         const data = await keyRes.json();
         recipientPublicKey = data.publicKey;
+        console.log('✅ Retrieved public key from server:', !!recipientPublicKey);
         // Store for future use
         if (recipientPublicKey) {
           await keyStore.storePublicKey(selectedUser, recipientPublicKey);
+          console.log('💾 Stored public key locally for future use');
         }
+      } else {
+        console.error('❌ Failed to fetch public key from server:', keyRes.status);
       }
     }
     
@@ -536,6 +647,7 @@ sendBtn.onclick = async (): Promise<void> => {
       throw new Error('Could not find public key for recipient');
     }
     
+    console.log('🔐 Encrypting message with recipient public key...');
     // Encrypt with recipient's public key
     const encrypt = new (window as any).JSEncrypt();
     encrypt.setPublicKey(recipientPublicKey);
@@ -545,11 +657,16 @@ sendBtn.onclick = async (): Promise<void> => {
       throw new Error('Failed to encrypt message');
     }
     
+    console.log('✅ Message encrypted successfully');
+    console.log('📤 Sending message via socket...');
+    
     socket.emit('send-message', { 
       to: selectedUser, 
       from: myUsername, 
       encrypted 
     });
+    
+    console.log('📤 Message sent via socket');
     
     appendMessage(`You: ${msg}`, true);
     messageInput.value = '';
@@ -601,6 +718,12 @@ async function logout(): Promise<void> {
   if (myUsername) {
     try {
       await keyStore.clearKeys(myUsername);
+      fetch('/api/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: myUsername })
+      });
+      console.log('✅ User logged out from server');
       console.log('Keys cleared from secure storage');
     } catch (error) {
       console.error('Failed to clear keys:', error);

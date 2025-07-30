@@ -1,7 +1,6 @@
 import express, { Request, Response } from 'express';
 import { createServer } from 'http';
 import { Server, Socket } from 'socket.io';
-import { generateKeyPairSync } from 'crypto';
 import cors from 'cors';
 import { join } from 'path';
 import { spawn } from 'child_process';
@@ -9,7 +8,6 @@ import { watch } from 'fs';
 
 interface User {
   publicKey: string;
-  privateKey: string;
 }
 
 interface Users {
@@ -31,17 +29,8 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
-// In-memory user store: { username: { publicKey, privateKey } }
+// In-memory user store: { username: { publicKey } }
 const users: Users = {};
-
-// Generate RSA key pair
-function generateKeyPair(): { publicKey: string; privateKey: string } {
-  return generateKeyPairSync('rsa', {
-    modulusLength: 2048,
-    publicKeyEncoding: { type: 'spki', format: 'pem' },
-    privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-  });
-}
 
 // Auto-compile TypeScript to JavaScript on file changes
 function buildFrontend() {
@@ -74,15 +63,50 @@ buildFrontend();
 app.use(express.static(join(process.cwd(), 'frontend')));
 
 // API Routes
-// Registration endpoint
-app.post('/api/register', (req: Request, res: Response) => {
-  const { username }: { username: string } = req.body;
-  if (!username || users[username]) {
-    return res.status(400).json({ error: 'Invalid or duplicate username' });
+// User registration endpoint
+app.post('/api/register', (req, res) => {
+  const { username, publicKey } = req.body;
+  
+  if (!username || typeof username !== 'string') {
+    return res.status(400).json({ error: 'Username is required' });
   }
-  const { publicKey, privateKey } = generateKeyPair();
-  users[username] = { publicKey, privateKey };
-  res.json({ publicKey });
+  
+  if (!publicKey || typeof publicKey !== 'string') {
+    return res.status(400).json({ error: 'Public key is required' });
+  }
+  
+  if (users[username]) {
+    return res.status(400).json({ error: 'Username already exists' });
+  }
+  
+  // Store user with their client-generated public key
+  users[username] = { publicKey };
+  
+  console.log(`User registered: ${username}`);
+  
+  res.json({ 
+    message: 'User registered successfully'
+  });
+});
+
+app.post('/api/logout', (req: Request, res: Response) => {
+  const { username } = req.body;
+
+  if (!username || typeof username !== 'string') {
+    return res.status(400).json({ error: 'Username is required' });
+  }
+
+  if (!users[username]) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  // Remove user from the in-memory store
+  delete users[username];
+  console.log(`User logged out: ${username}`);
+
+  res.json({
+    message: 'User logged out successfully'
+  });
 });
 
 // Get all users (for demo)
@@ -112,9 +136,11 @@ io.on('connection', (socket: Socket) => {
   console.log('User connected:', socket.id);
   
   socket.on('send-message', (payload: MessagePayload) => {
-    console.log('Message from', payload.from, 'to', payload.to, 'message:', payload.encrypted);
+    console.log('📤 Message from', payload.from, 'to', payload.to);
+    console.log('📧 Encrypted content:', payload.encrypted.substring(0, 50) + '...');
     // Forward encrypted message to recipient
     io.emit('receive-message', payload);
+    console.log('📡 Message broadcasted to all clients');
   });
 
   socket.on('disconnect', () => {
