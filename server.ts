@@ -131,16 +131,76 @@ app.get('/debug', (req: Request, res: Response) => {
   res.sendFile(join(process.cwd(), 'frontend', 'debug.html'));
 });
 
+// Serve monitor page
+app.get('/monitor', (req: Request, res: Response) => {
+  res.sendFile(join(process.cwd(), 'frontend', 'monitor.html'));
+});
+
 // Socket.io for real-time chat
 io.on('connection', (socket: Socket) => {
   console.log('User connected:', socket.id);
   
+  // Handle message sending
   socket.on('send-message', (payload: MessagePayload) => {
     console.log('📤 Message from', payload.from, 'to', payload.to);
-    console.log('📧 Encrypted content:', payload.encrypted.substring(0, 50) + '...');
+    console.log('📧 Encrypted content:', payload.encrypted);
     // Forward encrypted message to recipient
     io.emit('receive-message', payload);
     console.log('📡 Message broadcasted to all clients');
+  });
+
+  // Handle request for all users with their public keys
+  socket.on('get-users-with-keys', (callback) => {
+    console.log('📋 Client requested users with public keys');
+    const usersWithKeys = Object.entries(users).map(([username, user]) => ({
+      username,
+      publicKey: user.publicKey
+    }));
+    
+    console.log(`📋 Sending ${usersWithKeys.length} users with public keys`);
+    callback(usersWithKeys);
+  });
+
+  // Handle request for specific user's public key
+  socket.on('get-public-key', (username: string, callback) => {
+    console.log(`🔑 Client requested public key for: ${username}`);
+    const user = users[username];
+    
+    if (user) {
+      console.log(`✅ Found public key for ${username}`);
+      callback({ success: true, publicKey: user.publicKey });
+    } else {
+      console.log(`❌ User ${username} not found`);
+      callback({ success: false, error: 'User not found' });
+    }
+  });
+
+  // Handle request for all usernames only
+  socket.on('get-users', (callback) => {
+    console.log('👥 Client requested users list');
+    const usersList = Object.keys(users);
+    console.log(`👥 Sending ${usersList.length} users:`, usersList);
+    callback(usersList);
+  });
+
+  // Broadcast when a user joins (after registration)
+  socket.on('user-joined', (username: string) => {
+    console.log(`📢 Broadcasting user joined: ${username}`);
+    socket.broadcast.emit('user-joined', { username });
+    
+    // Also broadcast updated users list to all clients
+    const usersList = Object.keys(users);
+    io.emit('users-update', usersList);
+  });
+
+  // Broadcast when a user leaves
+  socket.on('user-left', (username: string) => {
+    console.log(`📢 Broadcasting user left: ${username}`);
+    socket.broadcast.emit('user-left', { username });
+    
+    // Also broadcast updated users list to all clients
+    const usersList = Object.keys(users);
+    io.emit('users-update', usersList);
   });
 
   socket.on('disconnect', () => {
@@ -154,5 +214,6 @@ server.listen(PORT, () => {
   console.log(`📡 Socket.io ready for connections`);
   console.log(`🌐 Frontend available at http://localhost:${PORT}`);
   console.log(`🐛 Debug page at http://localhost:${PORT}/debug`);
-  console.log(`👀 Watching for TypeScript changes...`);
+  console.log(`� Monitor console at http://localhost:${PORT}/monitor`);
+  console.log(`�👀 Watching for TypeScript changes...`);
 });

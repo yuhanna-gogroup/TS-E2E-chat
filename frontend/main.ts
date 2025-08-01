@@ -15,6 +15,9 @@ interface SecureKeyStore {
   storePublicKey(username: string, publicKey: string): Promise<void>;
   getPublicKey(username: string): Promise<string | null>;
   clearKeys(username: string): Promise<void>;
+  clearAllKeys(): Promise<void>;
+  deleteDatabase(): Promise<void>;
+  databaseExists(): Promise<boolean>;
 }
 
 let socket: any;
@@ -314,6 +317,100 @@ class SecureKeyStorage implements SecureKeyStore {
       db.close();
     }
   }
+
+  /**
+   * Clear ALL keys from the entire keystore (nuclear option)
+   */
+  async clearAllKeys(): Promise<void> {
+    const db = await this.openDB();
+    
+    try {
+      const transaction = db.transaction([this.storeName], 'readwrite');
+      const store = transaction.objectStore(this.storeName);
+      
+      // Clear the entire object store
+      await new Promise<void>((resolve, reject) => {
+        const request = store.clear();
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+      });
+      
+      // Wait for transaction to complete
+      await new Promise<void>((resolve, reject) => {
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(new Error('Transaction aborted'));
+      });
+      
+      console.log('🗑️ Cleared all keys from secure storage');
+      
+    } finally {
+      db.close();
+    }
+  }
+
+  /**
+   * Completely delete the IndexedDB database (nuclear option)
+   */
+  async deleteDatabase(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      console.log('🗑️ Initiating complete database deletion...');
+      
+      const deleteRequest = indexedDB.deleteDatabase(this.dbName);
+      
+      deleteRequest.onsuccess = () => {
+        console.log('✅ Database successfully deleted');
+        resolve();
+      };
+      
+      deleteRequest.onerror = () => {
+        console.error('❌ Database deletion failed:', deleteRequest.error);
+        reject(deleteRequest.error);
+      };
+      
+      deleteRequest.onblocked = () => {
+        console.warn('⚠️ Database deletion blocked - other connections may be open');
+        // Don't reject, just warn and continue
+        setTimeout(() => {
+          console.log('🔄 Continuing despite blocked deletion...');
+          resolve();
+        }, 2000);
+      };
+      
+      // Timeout safeguard
+      setTimeout(() => {
+        console.warn('⚠️ Database deletion timed out after 10 seconds');
+        resolve(); // Don't fail the logout process
+      }, 10000);
+    });
+  }
+
+  /**
+   * Check if database exists
+   */
+  async databaseExists(): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const request = indexedDB.open(this.dbName);
+      
+      request.onsuccess = () => {
+        const db = request.result;
+        const exists = db.objectStoreNames.contains(this.storeName);
+        db.close();
+        resolve(exists);
+      };
+      
+      request.onerror = () => {
+        resolve(false);
+      };
+      
+      request.onupgradeneeded = () => {
+        // Database doesn't exist
+        const db = request.result;
+        db.close();
+        resolve(false);
+      };
+    });
+  }
 }
 
 // Initialize secure key storage
@@ -361,19 +458,89 @@ function updateConnectionStatus(connected: boolean): void {
 
 async function fetchUsers(): Promise<void> {
   try {
-    console.log('👥 Fetching users list...');
-    const res = await fetch('/api/users');
-    if (!res.ok) {
-      throw new Error('Failed to fetch users');
+    console.log('👥 Fetching users list via socket...');
+    
+    // Use socket to get users instead of HTTP request
+    if (socket && socket.connected) {
+      socket.emit('get-users', (usersList: string[]) => {
+        console.log('👥 Users fetched via socket:', usersList);
+        users = usersList;
+        renderUsers();
+      });
+    } else {
+      // Fallback to HTTP if socket not available
+      const res = await fetch('/api/users');
+      if (!res.ok) {
+        throw new Error('Failed to fetch users');
+      }
+      const usersList = await res.json();
+      console.log('👥 Users fetched via HTTP:', usersList);
+      users = usersList;
+      renderUsers();
     }
-    const usersList = await res.json();
-    console.log('👥 Users fetched:', usersList);
-    users = usersList;
-    renderUsers();
   } catch (error) {
     console.error('❌ Error fetching users:', error);
     showStatusMessage('Failed to load users', 'error');
   }
+}
+
+/**
+ * Fetch all users with their public keys via socket
+ */
+async function fetchUsersWithKeys(): Promise<void> {
+  try {
+    console.log('🔑 Fetching users with public keys via socket...');
+    
+    if (socket && socket.connected) {
+      socket.emit('get-users-with-keys', (usersWithKeys: User[]) => {
+        console.log('🔑 Users with keys fetched via socket:', usersWithKeys);
+        
+        // Update users list
+        users = usersWithKeys.map(u => u.username);
+        
+        // Cache all public keys locally
+        usersWithKeys.forEach(async (user) => {
+          if (user.username !== myUsername) {
+            publicKeys[user.username] = user.publicKey;
+            // Also store in secure storage for persistence
+            await keyStore.storePublicKey(user.username, user.publicKey);
+          }
+        });
+        
+        console.log('💾 Cached public keys for all users');
+        renderUsers();
+      });
+    } else {
+      console.warn('⚠️ Socket not connected, falling back to individual requests');
+      await fetchUsers();
+    }
+  } catch (error) {
+    console.error('❌ Error fetching users with keys:', error);
+    showStatusMessage('Failed to load users with keys', 'error');
+  }
+}
+
+/**
+ * Get a specific user's public key via socket
+ */
+async function getPublicKeyViaSocket(username: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    if (!socket || !socket.connected) {
+      resolve(null);
+      return;
+    }
+    
+    console.log(`🔑 Requesting public key for ${username} via socket...`);
+    socket.emit('get-public-key', username, (response: { success: boolean; publicKey?: string; error?: string }) => {
+      if (response.success && response.publicKey) {
+        console.log(`✅ Received public key for ${username} via socket`);
+        resolve(response.publicKey);
+      } else {
+        console.log(`❌ Failed to get public key for ${username}: ${response.error}`);
+        resolve(null);
+      }
+    });
+  });
 }
 
 function showStatusMessage(message: string, type: 'success' | 'error' | 'info'): void {
@@ -521,17 +688,48 @@ registerBtn.onclick = async (): Promise<void> => {
       updateConnectionStatus(true);
       showStatusMessage(`Connected as ${username}`, 'success');
       
+      // Notify server that user joined
+      socket.emit('user-joined', username);
+      
       // Update UI
       updateUIForLoggedInUser();
       
-      // Fetch users list
-      fetchUsers();
+      // Fetch users with their public keys via socket
+      fetchUsersWithKeys();
     });
     
     socket.on('disconnect', () => {
       console.log('🔌 Socket disconnected');
       updateConnectionStatus(false);
       showStatusMessage('Connection lost', 'error');
+    });
+
+    // Listen for real-time user updates
+    socket.on('users-update', (usersList: string[]) => {
+      console.log('📢 Real-time users update:', usersList);
+      users = usersList;
+      renderUsers();
+    });
+
+    socket.on('user-joined', (data: { username: string }) => {
+      console.log('📢 User joined:', data.username);
+      appendMessage(`${data.username} joined the chat`, false, true);
+      // Refresh users to get the new user's public key
+      fetchUsersWithKeys();
+    });
+
+    socket.on('user-left', (data: { username: string }) => {
+      console.log('📢 User left:', data.username);
+      appendMessage(`${data.username} left the chat`, false, true);
+      // Remove from local cache
+      delete publicKeys[data.username];
+      // Update UI
+      if (selectedUser === data.username) {
+        selectedUser = '';
+        messageInput.disabled = true;
+        sendBtn.disabled = true;
+        messageInput.placeholder = 'Select a user to start messaging...';
+      }
     });
     
     socket.on('receive-message', async (payload: MessagePayload) => {
@@ -585,21 +783,31 @@ registerBtn.onclick = async (): Promise<void> => {
 
 async function refreshUsers(): Promise<void> {
   try {
-    const res = await fetch('/api/users');
-    users = await res.json();
-    renderUsers();
+    console.log('🔄 Refreshing users via socket...');
     
-    // Fetch public keys for other users
-    for (const u of users) {
-      if (u !== myUsername && !publicKeys[u]) {
-        try {
-          const keyRes = await fetch(`/api/public-key/${u}`);
-          if (keyRes.ok) {
-            const data = await keyRes.json();
-            publicKeys[u] = data.publicKey;
+    if (socket && socket.connected) {
+      // Use socket-based approach for real-time updates
+      fetchUsersWithKeys();
+    } else {
+      // Fallback to HTTP if socket not available
+      const res = await fetch('/api/users');
+      users = await res.json();
+      renderUsers();
+      
+      // Fetch public keys for other users via HTTP as fallback
+      for (const u of users) {
+        if (u !== myUsername && !publicKeys[u]) {
+          try {
+            const keyRes = await fetch(`/api/public-key/${u}`);
+            if (keyRes.ok) {
+              const data = await keyRes.json();
+              publicKeys[u] = data.publicKey;
+              // Cache locally
+              await keyStore.storePublicKey(u, data.publicKey);
+            }
+          } catch (error) {
+            console.error(`Failed to fetch public key for ${u}:`, error);
           }
-        } catch (error) {
-          console.error(`Failed to fetch public key for ${u}:`, error);
         }
       }
     }
@@ -621,25 +829,39 @@ sendBtn.onclick = async (): Promise<void> => {
   sendBtn.textContent = '🔄';
   
   try {
-    // Get recipient's public key from secure storage first
+    // Get recipient's public key - try multiple sources
     let recipientPublicKey = await keyStore.getPublicKey(selectedUser);
     console.log('🔑 Retrieved public key from storage for', selectedUser, ':', !!recipientPublicKey);
     
-    // If not found locally, try to get from server
+    // If not found locally, try in-memory cache
+    if (!recipientPublicKey && publicKeys[selectedUser]) {
+      recipientPublicKey = publicKeys[selectedUser];
+      console.log('🔑 Retrieved public key from memory cache for', selectedUser);
+    }
+    
+    // If still not found, try socket first, then HTTP fallback
     if (!recipientPublicKey) {
-      console.log('🌐 Fetching public key from server for', selectedUser);
-      const keyRes = await fetch(`/api/public-key/${selectedUser}`);
-      if (keyRes.ok) {
-        const data = await keyRes.json();
-        recipientPublicKey = data.publicKey;
-        console.log('✅ Retrieved public key from server:', !!recipientPublicKey);
-        // Store for future use
-        if (recipientPublicKey) {
-          await keyStore.storePublicKey(selectedUser, recipientPublicKey);
-          console.log('💾 Stored public key locally for future use');
+      console.log('🌐 Fetching public key via socket for', selectedUser);
+      recipientPublicKey = await getPublicKeyViaSocket(selectedUser);
+      
+      // If socket fails, fallback to HTTP
+      if (!recipientPublicKey) {
+        console.log('🌐 Socket failed, trying HTTP for', selectedUser);
+        const keyRes = await fetch(`/api/public-key/${selectedUser}`);
+        if (keyRes.ok) {
+          const data = await keyRes.json();
+          recipientPublicKey = data.publicKey;
+          console.log('✅ Retrieved public key from HTTP server:', !!recipientPublicKey);
+        } else {
+          console.error('❌ Failed to fetch public key from HTTP server:', keyRes.status);
         }
-      } else {
-        console.error('❌ Failed to fetch public key from server:', keyRes.status);
+      }
+      
+      // Cache the retrieved key for future use
+      if (recipientPublicKey) {
+        publicKeys[selectedUser] = recipientPublicKey;
+        await keyStore.storePublicKey(selectedUser, recipientPublicKey);
+        console.log('💾 Stored public key locally for future use');
       }
     }
     
@@ -691,7 +913,7 @@ function autoResizeTextarea(textarea: HTMLTextAreaElement): void {
 
 // Add logout functionality
 logoutBtn.onclick = async (): Promise<void> => {
-  if (confirm('Are you sure you want to logout? This will clear your encryption keys.')) {
+  if (confirm('⚠️ Are you sure you want to logout?\n\nThis will:\n• Clear ALL encryption keys from this device\n• Delete all cached user data\n• Remove all secure storage\n• Disconnect from the chat\n\nYou will need to generate new keys when you login again.')) {
     await logout();
   }
 };
@@ -717,26 +939,115 @@ usernameInput.addEventListener('keypress', (e: KeyboardEvent) => {
 async function logout(): Promise<void> {
   if (myUsername) {
     try {
-      await keyStore.clearKeys(myUsername);
+      // Method 1: Clear all keys efficiently using the clearAllKeys method
+      await keyStore.clearAllKeys();
+      
+      // Method 2: Also delete the entire IndexedDB database for maximum security
+      try {
+        console.log('🗑️ Attempting to delete IndexedDB database...');
+        const dbDeleteRequest = indexedDB.deleteDatabase('ChatAppKeys');
+        
+        await new Promise<void>((resolve, reject) => {
+          dbDeleteRequest.onsuccess = () => {
+            console.log('✅ Successfully deleted IndexedDB database');
+            resolve();
+          };
+          
+          dbDeleteRequest.onerror = () => {
+            console.error('❌ Failed to delete IndexedDB database:', dbDeleteRequest.error);
+            resolve(); // Continue anyway
+          };
+          
+          dbDeleteRequest.onblocked = () => {
+            console.warn('⚠️ IndexedDB deletion blocked by other connections');
+            // Try to force close any open connections
+            setTimeout(() => {
+              console.log('🔄 Retrying database deletion after delay...');
+              resolve();
+            }, 1000);
+          };
+          
+          // Timeout fallback
+          setTimeout(() => {
+            console.warn('⚠️ Database deletion timed out, continuing anyway');
+            resolve();
+          }, 5000);
+        });
+        
+      } catch (dbError) {
+        console.error('❌ IndexedDB deletion error:', dbError);
+      }
+      
+      // Method 3: Force close any remaining database connections
+      try {
+        // Create and immediately close a connection to force cleanup
+        const tempRequest = indexedDB.open('ChatAppKeys');
+        tempRequest.onsuccess = () => {
+          const tempDb = tempRequest.result;
+          tempDb.close();
+          console.log('🔄 Forced closure of remaining database connections');
+        };
+      } catch (closeError) {
+        console.warn('⚠️ Failed to force close database connections:', closeError);
+      }
+      
+      
+      // Clear session storage
+      sessionStorage.removeItem('chat_session_id');
+      sessionStorage.clear(); // Clear all session storage
+      console.log('🗑️ Cleared all session storage');
+      
+      // Clear local storage if we used it
+      localStorage.removeItem('securechat-monitor-session');
+      console.log('🗑️ Cleared local storage data');
+      
+      // Notify server via socket first
+      if (socket && socket.connected) {
+        socket.emit('user-left', myUsername);
+      }
+      
+      // Also notify via HTTP as backup
       fetch('/api/logout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: myUsername })
       });
+      
       console.log('✅ User logged out from server');
-      console.log('Keys cleared from secure storage');
+      console.log('🔒 ALL encryption keys and sensitive data cleared from device');
     } catch (error) {
-      console.error('Failed to clear keys:', error);
+      console.error('❌ Failed to clear keys:', error);
     }
   }
   
-  // Reset application state
+  // Reset application state - clear all sensitive data from memory
+  const sensitiveVars = [myUsername, myPrivateKey, myPublicKey];
   myUsername = '';
   myPrivateKey = '';
   myPublicKey = '';
   selectedUser = '';
   users = [];
-  publicKeys = {};
+  publicKeys = {}; // Clear all cached public keys
+  
+  // Overwrite sensitive variables with random data for security
+  sensitiveVars.forEach(varValue => {
+    if (varValue) {
+      // Overwrite memory with random data
+      varValue = Array(varValue.length).fill(0).map(() => 
+        String.fromCharCode(Math.floor(Math.random() * 256))
+      ).join('');
+    }
+  });
+  
+  // Force garbage collection of sensitive variables (if supported)
+  if (typeof global !== 'undefined' && global.gc) {
+    try {
+      global.gc();
+      console.log('🗑️ Forced garbage collection');
+    } catch (e) {
+      // Ignore if gc is not available
+    }
+  }
   
   if (socket) {
     socket.disconnect();

@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🔍 SecureChat Monitor - Developer Console</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+      background: #1a1a1a;
+      color: #f0f0f0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+      color: white;
+      padding: 20px;
+      border-radius: 12px;
+      margin-bottom: 20px;
+      text-align: center;
+      box-shadow: 0 4px 15px rgba(255, 107, 107, 0.3);
+    }
+
+    .header h1 {
+      font-size: 24px;
+      font-weight: 600;
+      margin-bottom: 5px;
+    }
+
+    .header p {
+      opacity: 0.9;
+      font-size: 14px;
+    }
+
+    .warning-banner {
+      background: #ffeaa7;
+      color: #2d3436;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      border-left: 4px solid #fdcb6e;
+      font-weight: 500;
+    }
+
+    .controls {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      font-family: inherit;
+    }
+
+    .btn-primary {
+      background: #74b9ff;
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #0984e3;
+    }
+
+    .btn-danger {
+      background: #fd79a8;
+      color: white;
+    }
+
+    .btn-danger:hover {
+      background: #e84393;
+    }
+
+    .btn-success {
+      background: #00b894;
+      color: white;
+    }
+
+    .btn-success:hover {
+      background: #00a085;
+    }
+
+    .status-indicator {
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .status-connected {
+      background: #00b894;
+      color: white;
+    }
+
+    .status-disconnected {
+      background: #636e72;
+      color: white;
+    }
+
+    .monitor-area {
+      flex: 1;
+      background: #2d3436;
+      border-radius: 12px;
+      padding: 20px;
+      overflow-y: auto;
+      border: 2px solid #636e72;
+      min-height: 400px;
+      max-height: 70vh;
+    }
+
+    .log-entry {
+      margin-bottom: 15px;
+      padding: 12px;
+      border-radius: 8px;
+      border-left: 4px solid #74b9ff;
+      background: #36454f;
+      font-size: 13px;
+      line-height: 1.5;
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .log-timestamp {
+      color: #b2bec3;
+      font-size: 11px;
+      margin-bottom: 5px;
+    }
+
+    .log-encrypted {
+      border-left-color: #fd79a8;
+      background: #4a3a4a;
+    }
+
+    .log-user-event {
+      border-left-color: #fdcb6e;
+      background: #4a4a3a;
+    }
+
+    .log-socket-event {
+      border-left-color: #00b894;
+      background: #3a4a3a;
+    }
+
+    .log-error {
+      border-left-color: #e17055;
+      background: #4a3a3a;
+    }
+
+    .message-details {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 8px;
+      margin-top: 8px;
+      font-size: 12px;
+    }
+
+    .message-label {
+      color: #74b9ff;
+      font-weight: 600;
+    }
+
+    .message-value {
+      color: #ddd;
+      word-break: break-all;
+    }
+
+    .encrypted-data {
+      background: #2d3436;
+      padding: 8px;
+      border-radius: 4px;
+      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+      font-size: 11px;
+      color: #fd79a8;
+      border: 1px solid #636e72;
+      max-height: 100px;
+      overflow-y: auto;
+    }
+
+    .stats {
+      display: flex;
+      gap: 20px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .stat-card {
+      background: #2d3436;
+      padding: 15px;
+      border-radius: 8px;
+      border: 1px solid #636e72;
+      text-align: center;
+      min-width: 120px;
+    }
+
+    .stat-number {
+      font-size: 24px;
+      font-weight: 700;
+      color: #74b9ff;
+      margin-bottom: 5px;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: #b2bec3;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: #636e72;
+    }
+
+    .filter-controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 15px;
+      flex-wrap: wrap;
+    }
+
+    .filter-btn {
+      padding: 6px 12px;
+      border: 1px solid #636e72;
+      background: transparent;
+      color: #b2bec3;
+      border-radius: 20px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .filter-btn.active {
+      background: #74b9ff;
+      color: white;
+      border-color: #74b9ff;
+    }
+
+    .export-section {
+      margin-top: 20px;
+      padding: 15px;
+      background: #2d3436;
+      border-radius: 8px;
+      border: 1px solid #636e72;
+    }
+
+    @media (max-width: 768px) {
+      .controls {
+        flex-direction: column;
+      }
+      
+      .stats {
+        flex-direction: column;
+      }
+      
+      .message-details {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🔍 SecureChat Monitor</h1>
+    <p>Developer Console - Message Flow Monitoring</p>
+  </div>
+
+  <div class="warning-banner">
+    ⚠️ <strong>Development Tool:</strong> This monitor is for debugging and security testing purposes only. 
+    It shows encrypted message traffic for analysis during development.
+  </div>
+
+  <div class="controls">
+    <button class="btn btn-primary" id="connectBtn">Connect Monitor</button>
+    <button class="btn btn-danger" id="disconnectBtn" style="display: none;">Disconnect</button>
+    <button class="btn btn-success" id="clearBtn">Clear Log</button>
+    <div class="status-indicator" id="statusIndicator">
+      <span class="status-disconnected">Disconnected</span>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-number" id="totalMessages">0</div>
+      <div class="stat-label">Total Messages</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number" id="encryptedMessages">0</div>
+      <div class="stat-label">Encrypted</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number" id="socketEvents">0</div>
+      <div class="stat-label">Socket Events</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number" id="activeUsers">0</div>
+      <div class="stat-label">Active Users</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number" id="connectionTime">--:--</div>
+      <div class="stat-label">Uptime</div>
+    </div>
+  </div>
+
+  <div class="filter-controls">
+    <button class="filter-btn active" data-filter="all">All Events</button>
+    <button class="filter-btn" data-filter="messages">Messages Only</button>
+    <button class="filter-btn" data-filter="users">User Events</button>
+    <button class="filter-btn" data-filter="socket-events">Socket Events</button>
+    <button class="filter-btn" data-filter="key-management">Key Management</button>
+    <button class="filter-btn" data-filter="errors">Errors</button>
+  </div>
+
+  <div class="monitor-area" id="monitorArea">
+    <div class="empty-state">
+      <div style="font-size: 48px; margin-bottom: 15px;">📡</div>
+      <h3>Monitoring Console Ready</h3>
+      <p>Click "Connect Monitor" to start listening to message traffic</p>
+    </div>
+  </div>
+
+  <div class="export-section">
+    <div class="controls">
+      <button class="btn btn-primary" id="exportBtn">Export Log</button>
+      <button class="btn btn-primary" id="saveSessionBtn">Save Session</button>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="monitor.js"></script>
+</body>
+</html>

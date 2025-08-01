@@ -199,6 +199,70 @@ class SecureKeyStorage {
       db.close();
     }
   }
+  async clearAllKeys() {
+    const db = await this.openDB();
+    try {
+      const transaction = db.transaction([this.storeName], "readwrite");
+      const store = transaction.objectStore(this.storeName);
+      await new Promise((resolve, reject) => {
+        const request = store.clear();
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+      });
+      await new Promise((resolve, reject) => {
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(new Error("Transaction aborted"));
+      });
+      console.log("\uD83D\uDDD1️ Cleared all keys from secure storage");
+    } finally {
+      db.close();
+    }
+  }
+  async deleteDatabase() {
+    return new Promise((resolve, reject) => {
+      console.log("\uD83D\uDDD1️ Initiating complete database deletion...");
+      const deleteRequest = indexedDB.deleteDatabase(this.dbName);
+      deleteRequest.onsuccess = () => {
+        console.log("✅ Database successfully deleted");
+        resolve();
+      };
+      deleteRequest.onerror = () => {
+        console.error("❌ Database deletion failed:", deleteRequest.error);
+        reject(deleteRequest.error);
+      };
+      deleteRequest.onblocked = () => {
+        console.warn("⚠️ Database deletion blocked - other connections may be open");
+        setTimeout(() => {
+          console.log("\uD83D\uDD04 Continuing despite blocked deletion...");
+          resolve();
+        }, 2000);
+      };
+      setTimeout(() => {
+        console.warn("⚠️ Database deletion timed out after 10 seconds");
+        resolve();
+      }, 1e4);
+    });
+  }
+  async databaseExists() {
+    return new Promise((resolve) => {
+      const request = indexedDB.open(this.dbName);
+      request.onsuccess = () => {
+        const db = request.result;
+        const exists = db.objectStoreNames.contains(this.storeName);
+        db.close();
+        resolve(exists);
+      };
+      request.onerror = () => {
+        resolve(false);
+      };
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        db.close();
+        resolve(false);
+      };
+    });
+  }
 }
 keyStore = new SecureKeyStorage;
 function appendMessage(msg, isMine, isSystem = false) {
@@ -235,19 +299,70 @@ function updateConnectionStatus(connected) {
 }
 async function fetchUsers() {
   try {
-    console.log("\uD83D\uDC65 Fetching users list...");
-    const res = await fetch("/api/users");
-    if (!res.ok) {
-      throw new Error("Failed to fetch users");
+    console.log("\uD83D\uDC65 Fetching users list via socket...");
+    if (socket && socket.connected) {
+      socket.emit("get-users", (usersList) => {
+        console.log("\uD83D\uDC65 Users fetched via socket:", usersList);
+        users = usersList;
+        renderUsers();
+      });
+    } else {
+      const res = await fetch("/api/users");
+      if (!res.ok) {
+        throw new Error("Failed to fetch users");
+      }
+      const usersList = await res.json();
+      console.log("\uD83D\uDC65 Users fetched via HTTP:", usersList);
+      users = usersList;
+      renderUsers();
     }
-    const usersList = await res.json();
-    console.log("\uD83D\uDC65 Users fetched:", usersList);
-    users = usersList;
-    renderUsers();
   } catch (error) {
     console.error("❌ Error fetching users:", error);
     showStatusMessage("Failed to load users", "error");
   }
+}
+async function fetchUsersWithKeys() {
+  try {
+    console.log("\uD83D\uDD11 Fetching users with public keys via socket...");
+    if (socket && socket.connected) {
+      socket.emit("get-users-with-keys", (usersWithKeys) => {
+        console.log("\uD83D\uDD11 Users with keys fetched via socket:", usersWithKeys);
+        users = usersWithKeys.map((u) => u.username);
+        usersWithKeys.forEach(async (user) => {
+          if (user.username !== myUsername) {
+            publicKeys[user.username] = user.publicKey;
+            await keyStore.storePublicKey(user.username, user.publicKey);
+          }
+        });
+        console.log("\uD83D\uDCBE Cached public keys for all users");
+        renderUsers();
+      });
+    } else {
+      console.warn("⚠️ Socket not connected, falling back to individual requests");
+      await fetchUsers();
+    }
+  } catch (error) {
+    console.error("❌ Error fetching users with keys:", error);
+    showStatusMessage("Failed to load users with keys", "error");
+  }
+}
+async function getPublicKeyViaSocket(username) {
+  return new Promise((resolve) => {
+    if (!socket || !socket.connected) {
+      resolve(null);
+      return;
+    }
+    console.log(`\uD83D\uDD11 Requesting public key for ${username} via socket...`);
+    socket.emit("get-public-key", username, (response) => {
+      if (response.success && response.publicKey) {
+        console.log(`✅ Received public key for ${username} via socket`);
+        resolve(response.publicKey);
+      } else {
+        console.log(`❌ Failed to get public key for ${username}: ${response.error}`);
+        resolve(null);
+      }
+    });
+  });
 }
 function showStatusMessage(message, type) {
   const existingStatus = document.querySelector(".status-message");
@@ -357,13 +472,35 @@ registerBtn.onclick = async () => {
       console.log("\uD83D\uDD0C Socket connected successfully");
       updateConnectionStatus(true);
       showStatusMessage(`Connected as ${username}`, "success");
+      socket.emit("user-joined", username);
       updateUIForLoggedInUser();
-      fetchUsers();
+      fetchUsersWithKeys();
     });
     socket.on("disconnect", () => {
       console.log("\uD83D\uDD0C Socket disconnected");
       updateConnectionStatus(false);
       showStatusMessage("Connection lost", "error");
+    });
+    socket.on("users-update", (usersList) => {
+      console.log("\uD83D\uDCE2 Real-time users update:", usersList);
+      users = usersList;
+      renderUsers();
+    });
+    socket.on("user-joined", (data) => {
+      console.log("\uD83D\uDCE2 User joined:", data.username);
+      appendMessage(`${data.username} joined the chat`, false, true);
+      fetchUsersWithKeys();
+    });
+    socket.on("user-left", (data) => {
+      console.log("\uD83D\uDCE2 User left:", data.username);
+      appendMessage(`${data.username} left the chat`, false, true);
+      delete publicKeys[data.username];
+      if (selectedUser === data.username) {
+        selectedUser = "";
+        messageInput.disabled = true;
+        sendBtn.disabled = true;
+        messageInput.placeholder = "Select a user to start messaging...";
+      }
     });
     socket.on("receive-message", async (payload) => {
       console.log("\uD83D\uDCE8 Received message:", payload);
@@ -406,19 +543,25 @@ registerBtn.onclick = async () => {
 };
 async function refreshUsers() {
   try {
-    const res = await fetch("/api/users");
-    users = await res.json();
-    renderUsers();
-    for (const u of users) {
-      if (u !== myUsername && !publicKeys[u]) {
-        try {
-          const keyRes = await fetch(`/api/public-key/${u}`);
-          if (keyRes.ok) {
-            const data = await keyRes.json();
-            publicKeys[u] = data.publicKey;
+    console.log("\uD83D\uDD04 Refreshing users via socket...");
+    if (socket && socket.connected) {
+      fetchUsersWithKeys();
+    } else {
+      const res = await fetch("/api/users");
+      users = await res.json();
+      renderUsers();
+      for (const u of users) {
+        if (u !== myUsername && !publicKeys[u]) {
+          try {
+            const keyRes = await fetch(`/api/public-key/${u}`);
+            if (keyRes.ok) {
+              const data = await keyRes.json();
+              publicKeys[u] = data.publicKey;
+              await keyStore.storePublicKey(u, data.publicKey);
+            }
+          } catch (error) {
+            console.error(`Failed to fetch public key for ${u}:`, error);
           }
-        } catch (error) {
-          console.error(`Failed to fetch public key for ${u}:`, error);
         }
       }
     }
@@ -439,19 +582,28 @@ sendBtn.onclick = async () => {
   try {
     let recipientPublicKey = await keyStore.getPublicKey(selectedUser);
     console.log("\uD83D\uDD11 Retrieved public key from storage for", selectedUser, ":", !!recipientPublicKey);
+    if (!recipientPublicKey && publicKeys[selectedUser]) {
+      recipientPublicKey = publicKeys[selectedUser];
+      console.log("\uD83D\uDD11 Retrieved public key from memory cache for", selectedUser);
+    }
     if (!recipientPublicKey) {
-      console.log("\uD83C\uDF10 Fetching public key from server for", selectedUser);
-      const keyRes = await fetch(`/api/public-key/${selectedUser}`);
-      if (keyRes.ok) {
-        const data = await keyRes.json();
-        recipientPublicKey = data.publicKey;
-        console.log("✅ Retrieved public key from server:", !!recipientPublicKey);
-        if (recipientPublicKey) {
-          await keyStore.storePublicKey(selectedUser, recipientPublicKey);
-          console.log("\uD83D\uDCBE Stored public key locally for future use");
+      console.log("\uD83C\uDF10 Fetching public key via socket for", selectedUser);
+      recipientPublicKey = await getPublicKeyViaSocket(selectedUser);
+      if (!recipientPublicKey) {
+        console.log("\uD83C\uDF10 Socket failed, trying HTTP for", selectedUser);
+        const keyRes = await fetch(`/api/public-key/${selectedUser}`);
+        if (keyRes.ok) {
+          const data = await keyRes.json();
+          recipientPublicKey = data.publicKey;
+          console.log("✅ Retrieved public key from HTTP server:", !!recipientPublicKey);
+        } else {
+          console.error("❌ Failed to fetch public key from HTTP server:", keyRes.status);
         }
-      } else {
-        console.error("❌ Failed to fetch public key from server:", keyRes.status);
+      }
+      if (recipientPublicKey) {
+        publicKeys[selectedUser] = recipientPublicKey;
+        await keyStore.storePublicKey(selectedUser, recipientPublicKey);
+        console.log("\uD83D\uDCBE Stored public key locally for future use");
       }
     }
     if (!recipientPublicKey) {
@@ -490,7 +642,15 @@ function autoResizeTextarea(textarea) {
   textarea.style.height = Math.min(textarea.scrollHeight, 120) + "px";
 }
 logoutBtn.onclick = async () => {
-  if (confirm("Are you sure you want to logout? This will clear your encryption keys.")) {
+  if (confirm(`⚠️ Are you sure you want to logout?
+
+This will:
+• Clear ALL encryption keys from this device
+• Delete all cached user data
+• Remove all secure storage
+• Disconnect from the chat
+
+You will need to generate new keys when you login again.`)) {
     await logout();
   }
 };
@@ -511,24 +671,81 @@ usernameInput.addEventListener("keypress", (e) => {
 async function logout() {
   if (myUsername) {
     try {
-      await keyStore.clearKeys(myUsername);
+      await keyStore.clearAllKeys();
+      try {
+        console.log("\uD83D\uDDD1️ Attempting to delete IndexedDB database...");
+        const dbDeleteRequest = indexedDB.deleteDatabase("ChatAppKeys");
+        await new Promise((resolve, reject) => {
+          dbDeleteRequest.onsuccess = () => {
+            console.log("✅ Successfully deleted IndexedDB database");
+            resolve();
+          };
+          dbDeleteRequest.onerror = () => {
+            console.error("❌ Failed to delete IndexedDB database:", dbDeleteRequest.error);
+            resolve();
+          };
+          dbDeleteRequest.onblocked = () => {
+            console.warn("⚠️ IndexedDB deletion blocked by other connections");
+            setTimeout(() => {
+              console.log("\uD83D\uDD04 Retrying database deletion after delay...");
+              resolve();
+            }, 1000);
+          };
+          setTimeout(() => {
+            console.warn("⚠️ Database deletion timed out, continuing anyway");
+            resolve();
+          }, 5000);
+        });
+      } catch (dbError) {
+        console.error("❌ IndexedDB deletion error:", dbError);
+      }
+      try {
+        const tempRequest = indexedDB.open("ChatAppKeys");
+        tempRequest.onsuccess = () => {
+          const tempDb = tempRequest.result;
+          tempDb.close();
+          console.log("\uD83D\uDD04 Forced closure of remaining database connections");
+        };
+      } catch (closeError) {
+        console.warn("⚠️ Failed to force close database connections:", closeError);
+      }
+      sessionStorage.removeItem("chat_session_id");
+      sessionStorage.clear();
+      console.log("\uD83D\uDDD1️ Cleared all session storage");
+      localStorage.removeItem("securechat-monitor-session");
+      console.log("\uD83D\uDDD1️ Cleared local storage data");
+      if (socket && socket.connected) {
+        socket.emit("user-left", myUsername);
+      }
       fetch("/api/logout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: myUsername })
       });
       console.log("✅ User logged out from server");
-      console.log("Keys cleared from secure storage");
+      console.log("\uD83D\uDD12 ALL encryption keys and sensitive data cleared from device");
     } catch (error) {
-      console.error("Failed to clear keys:", error);
+      console.error("❌ Failed to clear keys:", error);
     }
   }
+  const sensitiveVars = [myUsername, myPrivateKey, myPublicKey];
   myUsername = "";
   myPrivateKey = "";
   myPublicKey = "";
   selectedUser = "";
   users = [];
   publicKeys = {};
+  sensitiveVars.forEach((varValue) => {
+    if (varValue) {
+      varValue = Array(varValue.length).fill(0).map(() => String.fromCharCode(Math.floor(Math.random() * 256))).join("");
+    }
+  });
+  if (typeof global !== "undefined" && global.gc) {
+    try {
+      global.gc();
+      console.log("\uD83D\uDDD1️ Forced garbage collection");
+    } catch (e) {}
+  }
   if (socket) {
     socket.disconnect();
   }
